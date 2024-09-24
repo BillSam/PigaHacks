@@ -8,6 +8,7 @@ import shodan
 import dns.resolver
 from bs4 import BeautifulSoup
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Function to print the banner
@@ -42,16 +43,20 @@ def create_parser():
     
     # Recon Commands
     parser.add_argument("-s", "--subdomains", help="Scan for subdomains")
+    parser.add_argument("-amass", "--amass_scan", help="Perform subdomain enumeration using Amass")
+    parser.add_argument("-crt", "--crt_scan", help="Get SSL certificates from crt.sh for a domain")
     parser.add_argument("-t", "--tech", help="Find technologies of a domain")
     parser.add_argument("-d", "--dns", help="Scan a list of domains for DNS records")
     parser.add_argument("-sh", "--securityheaders", help="Scan for security headers")
     parser.add_argument("-sc", "--statuscode", help="Get HTTP status code of a domain")
     parser.add_argument("-shodan", "--shodan", help="Recon with Shodan")
-    parser.add_argument("--shodan-api", help="Shodan API Key")
+    parser.add_argument("--shodan-api", help="Shodan API Key", required='--shodan' in sys.argv)
     
     # Vulnerability Scanning
     parser.add_argument("-xss", "--xss_scan", help="Scan for XSS vulnerabilities")
     parser.add_argument("-sqli", "--sqli_scan", help="Scan for SQLi vulnerabilities")
+    parser.add_argument("-or", "--open_redirect", help="Scan for Open Redirect vulnerabilities")
+    parser.add_argument("-cj", "--clickjack", help="Scan for Clickjacking vulnerability")
     
     # Crawler
     parser.add_argument("-w", "--waybackurls", help="Scan for Wayback URLs")
@@ -60,7 +65,7 @@ def create_parser():
     # Port Scanning
     parser.add_argument("-n", "--nmap", help="Scan a target with nmap")
     parser.add_argument("-cidr", "--cidr_notation", help="Scan IP range using CIDR notation")
-    parser.add_argument("-ps", "--ports", help="Port numbers to scan")
+    parser.add_argument("-ps", "--ports", help="Port numbers to scan", required='--nmap' in sys.argv)
     
     # Concurrency & Threads
     parser.add_argument("-th", "--threads", type=int, default=25, help="Number of threads (default 25)")
@@ -98,6 +103,21 @@ def check_status_code(domain):
     except requests.RequestException as e:
         print_error(f"Error fetching status code for {domain}: {e}")
 
+# Security Header Scan
+def scan_security_headers(domain):
+    try:
+        response = requests.get(domain, timeout=5)
+        headers = response.headers
+        print(f"Security Headers for {domain}:")
+        security_headers = ['Content-Security-Policy', 'Strict-Transport-Security', 'X-Content-Type-Options', 'X-Frame-Options', 'X-XSS-Protection']
+        for header in security_headers:
+            if header in headers:
+                print_success(f"{header}: {headers[header]}")
+            else:
+                print_warning(f"{header} not set")
+    except requests.RequestException as e:
+        print_error(f"Error scanning security headers for {domain}: {e}")
+
 # XSS Vulnerability Scan
 def scan_xss(target_url):
     xss_payloads = ['<script>alert(1)</script>', '<img src=x onerror=alert(1)>']
@@ -120,17 +140,65 @@ def scan_sqli(target_url):
         except requests.RequestException as e:
             print_error(f"Error checking SQLi on {target_url}: {e}")
 
-# Wayback URLs (Threaded)
-def get_wayback_urls(domain):
-    url = f"http://web.archive.org/cdx/search/cdx?url={domain}&output=txt&fl=original&collapse=urlkey"
+# Open Redirect Scan
+def scan_open_redirect(target_url):
+    payloads = ["/?url=https://evil.com", "/redirect?url=https://evil.com"]
+    for payload in payloads:
+        try:
+            response = requests.get(f"{target_url}{payload}", allow_redirects=False, timeout=5)
+            if response.status_code == 302 or response.status_code == 301:
+                print_success(f"[+] Open Redirect Vulnerability found on {target_url}")
+        except requests.RequestException as e:
+            print_error(f"Error checking open redirect on {target_url}: {e}")
+
+# Clickjacking Scan
+def scan_clickjacking(domain):
     try:
-        response = requests.get(url, timeout=5)
-        urls = response.text.splitlines()
-        print(f"Found {len(urls)} Wayback URLs for {domain}:")
-        for u in urls:
-            print(u)
+        response = requests.get(domain, timeout=5)
+        if 'X-Frame-Options' not in response.headers:
+            print_warning(f"[!] Clickjacking vulnerability likely on {domain}. No X-Frame-Options set!")
+        else:
+            print_success(f"X-Frame-Options is set on {domain}")
+    except requests.RequestException as e:
+        print_error(f"Error checking clickjacking for {domain}: {e}")
+
+# Wayback URLs and gau integration (Threaded)
+def get_wayback_urls_and_gau(domain):
+    urls = set()  # Use a set to avoid duplicates
+
+    # Get URLs from gau
+    try:
+        print_status(f"Fetching URLs using gau for {domain}...")
+        gau_output = subprocess.run(f"gau {domain}", shell=True, capture_output=True, text=True)
+        if gau_output.returncode == 0:
+            gau_urls = gau_output.stdout.splitlines()
+            urls.update(gau_urls)
+            print(f"Found {len(gau_urls)} URLs using gau for {domain}")
+        else:
+            print_error(f"Error fetching URLs with gau for {domain}: {gau_output.stderr}")
+    except Exception as e:
+        print_error(f"Error executing gau: {e}")
+
+    # Get URLs from Wayback Machine
+    wayback_url = f"http://web.archive.org/cdx/search/cdx?url={domain}&output=txt&fl=original&collapse=urlkey"
+    try:
+        print_status(f"Fetching Wayback Machine URLs for {domain}...")
+        response = requests.get(wayback_url, timeout=5)
+        print(response.content)
+        wayback_urls = response.text.splitlines()
+        urls.update(wayback_urls)
+        print(f"Found {len(wayback_urls)} Wayback URLs for {domain}")
     except requests.RequestException as e:
         print_error(f"Error retrieving Wayback URLs: {e}")
+
+    # Print all collected URLs
+    if urls:
+        print(f"Total unique URLs collected for {domain}: {len(urls)}")
+        for url in urls:
+            print(url)
+    else:
+        print_warning(f"No URLs found for {domain}")
+
 
 # Web Crawler - Extract URLs and JavaScript files
 def web_crawler(domain):
@@ -148,9 +216,36 @@ def web_crawler(domain):
     except requests.RequestException as e:
         print_error(f"Error crawling {domain}: {e}")
 
+# crt.sh SSL Certificate Scan
+def crt_sh_scan(domain):
+    crt_url = f"https://crt.sh/?q={domain}&output=json"
+    try:
+        response = requests.get(crt_url, timeout=5)
+        if response.status_code == 200:
+            certs = response.json()
+            print(f"Found {len(certs)} certificates for {domain}:")
+            for cert in certs:
+                print(f"Common Name: {cert['common_name']}, Issuer: {cert['issuer_name']}, Valid From: {cert['not_before']}")
+        else:
+            print_error(f"crt.sh returned status code {response.status_code}")
+    except requests.RequestException as e:
+        print_error(f"Error fetching SSL certificates from crt.sh: {e}")
+
+# Amass Subdomain Enumeration
+def amass_subdomain_scan(domain):
+    try:
+        subprocess.run(f"amass enum -d {domain} -o amass_output.txt", shell=True, check=True)
+        with open("amass_output.txt", 'r') as f:
+            subdomains = f.readlines()
+        print(f"Amass found {len(subdomains)} subdomains for {domain}:")
+        for subdomain in subdomains:
+            print(subdomain.strip())
+    except subprocess.CalledProcessError as e:
+        print_error(f"Error running Amass: {e}")
+
 # Running nmap (Threaded)
 def run_nmap(target, ports):
-    nmap_command = f"nmap -p {ports} {target}"
+    nmap_command = f"nmap -sV -O -p {ports} {target}"  # Adding OS detection and service version scan
     try:
         subprocess.run(nmap_command, shell=True)
     except Exception as e:
@@ -209,6 +304,12 @@ def main():
         threaded_task_executor(check_status_code, domains, thread_count)
         print_success("HTTP status code check completed.")
 
+    # Security Header Scan
+    if args.securityheaders:
+        print_status(f"Scanning security headers for {args.securityheaders}")
+        scan_security_headers(args.securityheaders)
+        print_success("Security header scan completed.")
+
     # XSS Vulnerability Scan
     if args.xss_scan:
         print_status(f"Starting XSS scan for {args.xss_scan}")
@@ -221,13 +322,37 @@ def main():
         scan_sqli(args.sqli_scan)
         print_success("SQLi scan completed.")
 
+    # Open Redirect Scan
+    if args.open_redirect:
+        print_status(f"Starting Open Redirect scan for {args.open_redirect}")
+        scan_open_redirect(args.open_redirect)
+        print_success("Open Redirect scan completed.")
+
+    # Clickjacking Scan
+    if args.clickjack:
+        print_status(f"Checking for Clickjacking vulnerabilities on {args.clickjack}")
+        scan_clickjacking(args.clickjack)
+        print_success("Clickjacking check completed.")
+
+    # crt.sh SSL Certificate Scan
+    if args.crt_scan:
+        print_status(f"Fetching SSL certificates from crt.sh for {args.crt_scan}")
+        crt_sh_scan(args.crt_scan)
+        print_success("crt.sh scan completed.")
+
+    # Amass Subdomain Enumeration
+    if args.amass_scan:
+        print_status(f"Starting Amass subdomain enumeration for {args.amass_scan}")
+        amass_subdomain_scan(args.amass_scan)
+        print_success("Amass subdomain enumeration completed.")
+
     # Wayback URLs - Running in threads
     if args.waybackurls:
         print_status(f"Fetching Wayback URLs for domains listed in {args.waybackurls}")
         with open(args.waybackurls, 'r') as f:
             domains = [line.strip() for line in f.readlines()]
         print_status(f"Fetching Wayback URLs for {len(domains)} domains with {thread_count} threads...")
-        threaded_task_executor(get_wayback_urls, domains, thread_count)
+        threaded_task_executor(get_wayback_urls_and_gau, domains, thread_count)
         print_success("Wayback URL fetching completed.")
 
     # Web Crawler - Crawling websites for URLs and JS files
