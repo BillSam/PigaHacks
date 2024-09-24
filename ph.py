@@ -10,6 +10,32 @@ from bs4 import BeautifulSoup
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Function to print the banner
+def print_banner():
+    banner = r"""
+  ____  _             
+ |  _ \(_) __ _  _ __  
+ | |_) | |/ _` || '_ \ 
+ |  __/| | (_| || |_ ||
+ |_|   |_|\__,_||_| |_|
+             |_| 
+   P I G A  H A C K S   
+"""
+    print("\033[1;36m" + banner + "\033[0m")  # Cyan color for the banner
+
+# Status printing with colors
+def print_status(message):
+    print(f"\033[94m[INFO] {message}\033[0m")  # Blue text for information
+
+def print_success(message):
+    print(f"\033[92m[SUCCESS] {message}\033[0m")  # Green text for success
+
+def print_error(message):
+    print(f"\033[91m[ERROR] {message}\033[0m")  # Red text for errors
+
+def print_warning(message):
+    print(f"\033[93m[WARNING] {message}\033[0m")  # Yellow text for warnings
+
 # Argument parser
 def create_parser():
     parser = argparse.ArgumentParser(description="Piga Hacks - Recon Tool")
@@ -49,7 +75,7 @@ def dns_query(domain):
         for rdata in answers:
             print(f"{domain} A Record: {rdata}")
     except dns.exception.DNSException as e:
-        print(f"Error resolving {domain}: {e}")
+        print_error(f"Error resolving {domain}: {e}")
 
 # Shodan Lookup (Threaded)
 def shodan_lookup(api_key, domain):
@@ -62,7 +88,7 @@ def shodan_lookup(api_key, domain):
         for item in host['data']:
             print(f"Port: {item['port']}, Banner: {item['data']}")
     except shodan.APIError as e:
-        print(f"Shodan API Error: {e}")
+        print_error(f"Shodan API Error: {e}")
 
 # HTTP Status Code Check (Threaded)
 def check_status_code(domain):
@@ -70,7 +96,7 @@ def check_status_code(domain):
         response = requests.get(f"http://{domain}", timeout=5)
         print(f"HTTP Status Code for {domain}: {response.status_code}")
     except requests.RequestException as e:
-        print(f"Error fetching status code for {domain}: {e}")
+        print_error(f"Error fetching status code for {domain}: {e}")
 
 # XSS Vulnerability Scan
 def scan_xss(target_url):
@@ -79,9 +105,9 @@ def scan_xss(target_url):
         try:
             response = requests.get(f"{target_url}?param={payload}", timeout=5)
             if payload in response.text:
-                print(f"[+] XSS Vulnerability found on {target_url}")
+                print_success(f"[+] XSS Vulnerability found on {target_url}")
         except requests.RequestException as e:
-            print(f"Error checking XSS on {target_url}: {e}")
+            print_error(f"Error checking XSS on {target_url}: {e}")
 
 # SQLi Vulnerability Scan
 def scan_sqli(target_url):
@@ -90,9 +116,9 @@ def scan_sqli(target_url):
         try:
             response = requests.get(f"{target_url}?param={payload}", timeout=5)
             if "SQL" in response.text or "syntax" in response.text:
-                print(f"[+] SQLi Vulnerability found on {target_url}")
+                print_success(f"[+] SQLi Vulnerability found on {target_url}")
         except requests.RequestException as e:
-            print(f"Error checking SQLi on {target_url}: {e}")
+            print_error(f"Error checking SQLi on {target_url}: {e}")
 
 # Wayback URLs (Threaded)
 def get_wayback_urls(domain):
@@ -104,7 +130,7 @@ def get_wayback_urls(domain):
         for u in urls:
             print(u)
     except requests.RequestException as e:
-        print(f"Error retrieving Wayback URLs: {e}")
+        print_error(f"Error retrieving Wayback URLs: {e}")
 
 # Web Crawler - Extract URLs and JavaScript files
 def web_crawler(domain):
@@ -120,7 +146,7 @@ def web_crawler(domain):
         for js in js_files:
             print(js)
     except requests.RequestException as e:
-        print(f"Error crawling {domain}: {e}")
+        print_error(f"Error crawling {domain}: {e}")
 
 # Running nmap (Threaded)
 def run_nmap(target, ports):
@@ -128,7 +154,7 @@ def run_nmap(target, ports):
     try:
         subprocess.run(nmap_command, shell=True)
     except Exception as e:
-        print(f"Error running nmap: {e}")
+        print_error(f"Error running nmap: {e}")
 
 # Scan a CIDR Range (Threaded)
 def scan_cidr(cidr_range):
@@ -136,7 +162,7 @@ def scan_cidr(cidr_range):
     try:
         subprocess.run(nmap_command, shell=True)
     except Exception as e:
-        print(f"Error running CIDR scan: {e}")
+        print_error(f"Error running CIDR scan: {e}")
 
 # Threading logic for tasks
 def threaded_task_executor(function, task_list, max_threads):
@@ -146,10 +172,13 @@ def threaded_task_executor(function, task_list, max_threads):
             try:
                 future.result()  # Get the result of the function
             except Exception as exc:
-                print(f"Error occurred: {exc}")
+                print_error(f"Error occurred: {exc}")
 
 # Main function
 def main():
+    # Print the banner at the start
+    print_banner()
+
     parser = create_parser()
     args = parser.parse_args()
 
@@ -158,51 +187,69 @@ def main():
 
     # DNS Scan - Running in threads
     if args.dns:
+        print_status(f"Starting DNS queries for domains listed in {args.dns}")
         with open(args.dns, 'r') as f:
             domains = [line.strip() for line in f.readlines()]
-        print(f"Running DNS Queries on {len(domains)} domains...")
+        print_status(f"Running DNS Queries on {len(domains)} domains with {thread_count} threads...")
         threaded_task_executor(dns_query, domains, thread_count)
+        print_success("DNS queries completed.")
 
     # Shodan Lookup - Single target
     if args.shodan and args.shodan_api:
+        print_status(f"Starting Shodan lookup for {args.shodan}")
         shodan_lookup(args.shodan_api, args.shodan)
+        print_success("Shodan lookup completed.")
 
     # HTTP Status Code Check - Running in threads
     if args.statuscode:
+        print_status(f"Checking HTTP status codes for domains listed in {args.statuscode}")
         with open(args.statuscode, 'r') as f:
             domains = [line.strip() for line in f.readlines()]
-        print(f"Checking status codes for {len(domains)} domains...")
+        print_status(f"Checking status codes for {len(domains)} domains with {thread_count} threads...")
         threaded_task_executor(check_status_code, domains, thread_count)
+        print_success("HTTP status code check completed.")
 
     # XSS Vulnerability Scan
     if args.xss_scan:
+        print_status(f"Starting XSS scan for {args.xss_scan}")
         scan_xss(args.xss_scan)
+        print_success("XSS scan completed.")
 
     # SQLi Vulnerability Scan
     if args.sqli_scan:
+        print_status(f"Starting SQLi scan for {args.sqli_scan}")
         scan_sqli(args.sqli_scan)
+        print_success("SQLi scan completed.")
 
     # Wayback URLs - Running in threads
     if args.waybackurls:
+        print_status(f"Fetching Wayback URLs for domains listed in {args.waybackurls}")
         with open(args.waybackurls, 'r') as f:
             domains = [line.strip() for line in f.readlines()]
-        print(f"Fetching Wayback URLs for {len(domains)} domains...")
+        print_status(f"Fetching Wayback URLs for {len(domains)} domains with {thread_count} threads...")
         threaded_task_executor(get_wayback_urls, domains, thread_count)
+        print_success("Wayback URL fetching completed.")
 
     # Web Crawler - Crawling websites for URLs and JS files
     if args.webcrawler:
+        print_status(f"Crawling {args.webcrawler} for URLs and JavaScript files")
         web_crawler(args.webcrawler)
+        print_success("Web crawling completed.")
 
     # Nmap Scan - Running in threads
     if args.nmap and args.ports:
+        print_status(f"Starting Nmap scan for targets listed in {args.nmap}")
         with open(args.nmap, 'r') as f:
             targets = [line.strip() for line in f.readlines()]
-        print(f"Running Nmap scans on {len(targets)} targets...")
+        print_status(f"Running Nmap scans on {len(targets)} targets with {thread_count} threads...")
         threaded_task_executor(lambda target: run_nmap(target, args.ports), targets, thread_count)
+        print_success("Nmap scan completed.")
 
     # CIDR Range Scanning
     if args.cidr_notation:
+        print_status(f"Starting CIDR range scan for {args.cidr_notation}")
         scan_cidr(args.cidr_notation)
+        print_success("CIDR range scan completed.")
 
 if __name__ == "__main__":
     main()
